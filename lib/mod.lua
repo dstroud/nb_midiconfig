@@ -2,10 +2,22 @@ local mod = require "core/mods"
 local textentry = require "textentry"
 local filepath = "/home/we/dust/data/nb_midiconfig/"
 local nb_midiconfig = {}
+local cc_names = {}
 
 local function read_confs()
     if util.file_exists(filepath) then
-        local confs = util.scandir(filepath)
+        local files = util.scandir(filepath)
+        local confs = {}
+        local names = {}
+        for i = 1, #files do
+            local filename = files[i]
+            local type = string.sub(filename, string.len(filename) - 4)
+            if type == ".conf" then
+                table.insert(confs, filename)
+            elseif type == ".name" then
+                table.insert(names, filename)
+            end
+        end
 
         nb_midiconfig = {}
         for i = 1, #confs do
@@ -16,7 +28,40 @@ local function read_confs()
             print("table >> read: " .. filepath .. filename)
         end
 
+        cc_names = {defaults = tab.load("/home/we/dust/code/nb_midiconfig/lib/defaults.name")}
+        for i = 1, #names do
+            local filename = names[i]
+            local configname = string.sub(filename, 1, string.len(filename) - 5)
+            cc_names[configname] = tab.load(filepath .. filename)
+            print("table >> read: " .. filepath .. filename)
+        end
+
     end
+end
+
+local function copyfile(source, destination)
+    -- Open the source file in read mode
+    local src = io.open(source, "rb")
+    if not src then
+        return false, "Failed to open source file"
+    end
+
+    -- Open the destination file in write mode
+    local dst = io.open(destination, "wb")
+    if not dst then
+        src:close()
+        return false, "Failed to open destination file"
+    end
+
+    -- Copy the content
+    local content = src:read("*all")
+    dst:write(content)
+
+    -- Close the files
+    src:close()
+    dst:close()
+
+    return true
 end
 
 local function write_confs()
@@ -28,6 +73,11 @@ local function write_confs()
         if v.values then
             tab.save(v.values, filepath .. v.name .. ".conf")
             print("table >> write: " .. filepath .. v.name .. ".conf")
+            
+            if not cc_names[v.name] then -- if .name file doesn't exist, copy from lib so user can (optionally) edit
+                copyfile(_path.code .. "nb_midiconfig/lib/defaults.name", filepath .. v.name .. ".name")
+                print("table >> write: " .. filepath .. v.name .. ".name")
+            end
         end
     end
 end
@@ -40,10 +90,13 @@ local function delete_conf(conf_id)
         end
     end
 
-    local file = filepath .. conf_id .. ".conf"
-    if util.file_exists(file) then
-        os.remove(file)                         -- delete .conf file
-        print("table >> delete: " .. file)
+    local filetype = {".conf", ".name"}
+    for i = 1, 2 do
+        local file = filepath .. conf_id .. filetype[i]
+        if util.file_exists(file) then
+            os.remove(file)                         -- delete .conf and .name files
+            print("table >> delete: " .. file)
+        end
     end
 end
 
@@ -112,6 +165,8 @@ local function add_midiconfig_players()
         local bend_range
 
         function player:add_params()
+            local names = cc_names[v.name] or cc_names["defaults"] or {}
+
             -------------------------------------------------------------------------
             -- helper functions
             -------------------------------------------------------------------------
@@ -185,7 +240,7 @@ local function add_midiconfig_players()
                     params:set_action(param_id,
                         function(val)
                             if val ~= -1 then
-                                local msb, lsb = get_bytes(val)
+                                local lsb, msb = get_bytes(val)
                                 self.conn:cc(0, msb, ch)
                                 self.conn:cc(32, lsb, ch)
                             end
@@ -277,8 +332,9 @@ local function add_midiconfig_players()
             
             local cc_start = #prm - 128 + 1 -- add standard CCs
             for i = cc_start, cc_start + 127 do
-                if v.values[prm[i]] then
-                    add_cc(i - cc_start)
+                local cc_no = prm[i]
+                if v.values[cc_no] then
+                    add_cc(i - cc_start, cc_no .. " " .. names[prm[i]])
                 end
             end
             
@@ -638,17 +694,26 @@ function m.redraw()
                 local idx = i + selected_row_l2 - 3
                 screen.level( i == 3 and 15 or 4)
                 screen.move(0, 10 * i)
-                screen.text(prm[idx])
-
+                
                 if prm_type[idx][1] == "bool" then
+                    if cc_names[editing_config_name] then
+                        screen.text(prm[idx] .. " " .. cc_names[editing_config_name][prm[idx]])
+                    else
+                        screen.text(prm[idx] .. " " .. cc_names["defaults"][prm[idx]])
+                    end
+
                     if editing_config_tab[idx] then
                         screen.rect(124, 10 * i - 4, 3, 3)
                         screen.fill()
                     end
                 elseif prm_type[idx][1] ~= "meta" then -- `number` and `option` demi-param
+                    screen.text(prm[idx])
                     screen.move(127, 10 * i)
                     screen.text_right(editing_config_tab[idx])
+                else -- meta
+                    screen.text(prm[idx])
                 end
+
             end
         end
     end
