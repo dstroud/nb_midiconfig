@@ -3,8 +3,14 @@ local textentry = require "textentry"
 local filepath = "/home/we/dust/data/nb_midiconfig/"
 local nb_midiconfig = {}
 local cc_names = {}
+local m = {}
+local interaction = "l1"
+local selected_row_l1 = 1
+local selected_row_l2 = 1
+local editing_config_name
+local editing_config_tab = {}
 
-local function read_confs()
+local function read_files()
     if util.file_exists(filepath) then
         local files = util.scandir(filepath)
         local confs = {}
@@ -36,10 +42,16 @@ local function read_confs()
             print("table >> read: " .. filepath .. filename)
         end
 
+        for i = 1, #nb_midiconfig do -- return the new row_number in case it has changed due to filesystem sort
+            if nb_midiconfig[i].name == editing_config_name then
+                selected_row_l1 = i
+                break
+            end
+        end
     end
 end
 
-local function copyfile(source, destination)
+local function copy_file(source, destination)
     -- Open the source file in read mode
     local src = io.open(source, "rb")
     if not src then
@@ -64,7 +76,7 @@ local function copyfile(source, destination)
     return true
 end
 
-local function write_confs()
+local function write_files()
     if util.file_exists(filepath) == false then
         util.make_dir(filepath)
     end
@@ -75,14 +87,14 @@ local function write_confs()
             print("table >> write: " .. filepath .. v.name .. ".conf")
             
             if not cc_names[v.name] then -- if .name file doesn't exist, copy from lib so user can (optionally) edit
-                copyfile(_path.code .. "nb_midiconfig/lib/defaults.name", filepath .. v.name .. ".name")
+                copy_file(_path.code .. "nb_midiconfig/lib/defaults.name", filepath .. v.name .. ".name")
                 print("table >> write: " .. filepath .. v.name .. ".name")
             end
         end
     end
 end
 
-local function delete_conf(conf_id)
+local function delete_files(conf_id)
     for i = 1, #nb_midiconfig do 
         if nb_midiconfig[i].name == conf_id then
             table.remove(nb_midiconfig, i)      -- delete entry from nb_midiconfig
@@ -100,6 +112,11 @@ local function delete_conf(conf_id)
     end
 end
 
+-- on/off params that aren't CC
+local params_bool = {
+    "always show"
+}
+
 -- required demi-params for config
 local params_number = {
     {name = "port", type = {"number", 1, 16, 1}},
@@ -114,14 +131,15 @@ local params_option = {
     {name = "program change", type = {"option", "-", "0-99", "0-127", "1-128"}},
 }
 
--- on/off params that aren't CC
-local params_bool = {
-    -- eg: "param 1" -- can be used to enable custom params (need to handle in add_params)
-}
-
 local prm = {"DELETE CONFIG"} -- numerically indexed list of demi-param names, also contains meta command(s) for L2 menu
 local prm_type = {{"meta"}} -- number, option, bool corresponding to prm table
 local prm_lookup = {["DELETE CONFIG"] = 1} -- look up prm name and return index in prm/prm_type
+
+for i = 1, #params_bool do
+    table.insert(prm, params_bool[i])
+    table.insert(prm_type, {"bool"})
+    prm_lookup[params_bool[i]] = #prm
+end
 
 for i = 1, #params_number do
     table.insert(prm, params_number[i].name)
@@ -135,12 +153,6 @@ for i = 1, #params_option do
     prm_lookup[params_option[i].name] = #prm
 end
 
-for i = 1, #params_bool do
-    table.insert(prm, params_bool[i])
-    table.insert(prm_type, {"bool"})
-    prm_lookup[params_bool[i]] = #prm
-end
-
 for i = 0, 127 do
     table.insert(prm, "cc " .. i)
     table.insert(prm_type, {"bool"})
@@ -152,7 +164,7 @@ if note_players == nil then
 end
 
 local function add_midiconfig_players()
-    read_confs()
+    read_files()
     for _, v in ipairs(nb_midiconfig) do
         local id = "nb_" .. v.name
         local player = {}
@@ -231,16 +243,16 @@ local function add_midiconfig_players()
                     local param_id = id .. "_bank_msb+lsb"
                     incr_group()
                     reg_param(param_id)
-                    params:add_number(param_id, "bank select", -1, 16383, -1,
+                    params:add_number(param_id, "bank select", 0, 16384, 0,
                         function(param)
                             local val = param:get()
-                            return(val == -1 and "-" or val)
+                            return(val == 0 and "-" or val)
                         end
                     )
                     params:set_action(param_id,
                         function(val)
-                            if val ~= -1 then
-                                local lsb, msb = get_bytes(val)
+                            if val ~= 0 then
+                                local lsb, msb = get_bytes(val - 1)
                                 self.conn:cc(0, msb, ch)
                                 self.conn:cc(32, lsb, ch)
                             end
@@ -425,7 +437,9 @@ local function add_midiconfig_players()
                 end
             )
 
-            params:hide(id)
+            if not v.values["always show"] then
+                params:hide(id)
+            end
         end
 
         function player:note_on(note, vel)
@@ -437,13 +451,17 @@ local function add_midiconfig_players()
         end
 
         function player:active()
-            params:show(id)
-            _menu.rebuild_params()
+            if not v.values["always show"] then
+                params:show(id)
+                _menu.rebuild_params()
+            end
         end
     
         function player:inactive()
-            params:hide(id)
-            _menu.rebuild_params()
+            if not v.values["always show"] then
+                params:hide(id)
+                _menu.rebuild_params()
+            end
         end
     
         function player:modulate(val)
@@ -496,15 +514,6 @@ end
 
 mod.hook.register("script_pre_init", "midiconfig pre init", pre_init)
 
-
--- system mod menu for managing configs
-local m = {}
-local interaction = "l1"
-local selected_row_l1 = 1
-local selected_row_l2 = 1
-local editing_config_name
-local editing_config_tab = {}
-
 local function init_editing_config_tab() -- init working table with all current prms
     editing_config_tab = {}
     for i = 1, #prm_type do
@@ -536,7 +545,7 @@ local function load_editing_config_tab()
         end
     end
 end
-
+    
 function m.key(n, z)
     if n == 2 and z == 1 then
         if interaction == "l1" then
@@ -546,7 +555,8 @@ function m.key(n, z)
             for i = 1, #prm do
                 nb_midiconfig[selected_row_l1].values[prm[i]] = editing_config_tab[i] -- indexed by prm name/id
             end
-            write_confs()
+            write_files()
+            read_files() -- bit of a hack to sort configs
             interaction = "l1"
             mod.menu.redraw()
         end
@@ -578,7 +588,7 @@ function m.key(n, z)
                         if available then
                             table.insert(nb_midiconfig, {name = txt})
                             config_name = txt
-                            write_confs()
+                            write_files()
                             selected_row_l2 = 1
                             interaction = "l2"
                             editing_config_name = txt
@@ -600,6 +610,7 @@ function m.key(n, z)
 
             else -- editing an existing config
                 editing_config_name = nb_midiconfig[selected_row_l1].name
+                read_files()
                 selected_row_l2 = 1
                 interaction = "l2"
                 load_editing_config_tab()
@@ -611,7 +622,7 @@ function m.key(n, z)
                 editing_config_tab[selected_row_l2] =  not editing_config_tab[selected_row_l2] -- flip enabled state
                 mod.menu.redraw()
             elseif prm_type[selected_row_l2][1] == "meta" then -- currently just `DELETE CONFIG`
-                delete_conf(editing_config_name)
+                delete_files(editing_config_name)
                 selected_row_l1 = 1
                 interaction = "l1"
                 mod.menu.redraw()
@@ -697,9 +708,9 @@ function m.redraw()
                 
                 if prm_type[idx][1] == "bool" then
                     if cc_names[editing_config_name] then
-                        screen.text(prm[idx] .. " " .. cc_names[editing_config_name][prm[idx]])
+                        screen.text(prm[idx] .. " " .. (cc_names[editing_config_name][prm[idx]] or ""))
                     else
-                        screen.text(prm[idx] .. " " .. cc_names["defaults"][prm[idx]])
+                        screen.text(prm[idx] .. " " .. (cc_names["defaults"][prm[idx]] or ""))
                     end
 
                     if editing_config_tab[idx] then
@@ -725,7 +736,7 @@ function m.init()
     interaction = "l1"
     selected_row_l1 = 1
     selected_row_l2 = 1
-    read_confs()
+    read_files()
 end -- on menu entry
 
 function m.deinit()
@@ -734,7 +745,7 @@ function m.deinit()
         for i = 1, #prm do
             nb_midiconfig[selected_row_l1].values[prm[i]] = editing_config_tab[i] -- indexed by prm name/id
         end
-        write_confs()
+        write_files()
     end
 end -- on menu exit
 
