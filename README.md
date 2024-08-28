@@ -53,4 +53,4 @@ Optional parameters that override whatever was set at the config level and can b
 ### Addendum, contributing
 For script authors: this mod surfaces all configured param ids using the `params` table in the NB player object's describe() function.
 
-I'm not personally motivated to accomodate every weird implentation of MIDI that has shown up over the last 40+ years, but if there is something that a bunch of folks would benefit from, let me know. Otherwise, PRs are certainly welcome.
+I'm not personally motivated to accommodate every weird implementation of MIDI that has shown up over the last 40+ years, but if there is something that a bunch of folks would benefit from, let me know. Otherwise, PRs are certainly welcome.
