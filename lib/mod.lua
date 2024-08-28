@@ -732,6 +732,9 @@ function m.redraw()
 end
 
 function m.init()
+    if util.file_exists(filepath) == false then
+        util.make_dir(filepath)
+    end
     init_editing_config_tab()
     interaction = "l1"
     selected_row_l1 = 1
