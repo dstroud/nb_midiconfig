@@ -498,7 +498,7 @@ local function add_midiconfig_players()
                 supports_bend = true,
                 supports_slew = false,
                 note_mod_targets = { "pressure" },
-                modulate_description = "cc " .. modulation_cc,
+                modulate_description = modulation_cc and ("cc " .. modulation_cc) or nil, -- nil if called before add_params
                 params = paramlist or {},
             }
         end
